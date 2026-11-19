@@ -7,6 +7,8 @@
 ]]
 
 -- ══ Anti-detection Helpers ══
+    -- safe_service: use cloneref for all read-only service access so game scripts
+    -- can't detect which services this script touches.
     local function safe_service(name)
         local ok, svc = pcall(function()
             local s = game:GetService(name)
@@ -15,22 +17,31 @@
         return ok and svc or game:GetService(name)
     end
 
+    -- rand_str: generate a random alphanumeric string for Instance names.
+    -- Written with standard ".." concat to stay compatible with all executor runtimes.
     local function rand_str(len)
         len = len or math.random(8, 16)
         local pool = "QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm0123456789"
         local s = ""
         for _ = 1, len do
             local i = math.random(1, #pool)
-            s ..= pool:sub(i, i)
+            s = s .. pool:sub(i, i)
         end
         return s
     end
 
+    -- protect: only applied to the CIRCLE ScreenGui (the one the player never
+    -- interacts with directly).  We deliberately do NOT protect the main window
+    -- ScreenGui ("items") because on several executors protect_gui/syn.protect_gui
+    -- hides the GUI from the local player's renderer as well as game scripts,
+    -- making the entire UI invisible with no error.
     local function protect(gui)
-        if protect_gui then
-            pcall(protect_gui, gui)
-        elseif syn and syn.protect_gui then
-            pcall(syn.protect_gui, gui)
+        local ok1, fn1 = pcall(function() return protect_gui end)
+        local ok2, fn2 = pcall(function() return syn and syn.protect_gui end)
+        if ok1 and type(fn1) == "function" then
+            pcall(fn1, gui)
+        elseif ok2 and type(fn2) == "function" then
+            pcall(fn2, gui)
         end
     end
 -- ══
@@ -45,7 +56,10 @@
     local lighting      = safe_service("Lighting")
     local run           = safe_service("RunService")
     local stats         = safe_service("Stats")
-    local coregui       = safe_service("CoreGui")
+    -- CoreGui: use the REAL reference (not cloneref) because we parent ScreenGuis
+    -- to it.  On some executors, parenting to cloneref(CoreGui) silently places
+    -- the GUI in a ghost copy that never renders.
+    local coregui       = game:GetService("CoreGui")
     local debris        = safe_service("Debris")
     local tween_service = safe_service("TweenService")
     local sound_service = safe_service("SoundService")
@@ -553,7 +567,8 @@
                 ZIndexBehavior   = Enum.ZIndexBehavior.Global;
                 IgnoreGuiInset   = true;
             })
-            protect(library["items"])
+            -- Do NOT protect the main window — protect_gui on some executors
+            -- hides the ScreenGui from the player's own renderer too.
 
             library["other"] = library:create("ScreenGui", {
                 Parent           = coregui;
@@ -562,6 +577,7 @@
                 ZIndexBehavior   = Enum.ZIndexBehavior.Sibling;
                 IgnoreGuiInset   = true;
             })
+            -- "other" is hidden (Enabled=false) so protect_gui is safe here.
             protect(library["other"])
 
             -- FIX: cache was undefined; point it to the hidden ScreenGui
